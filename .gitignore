@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Benchmark results (large, regenerable)
+jobs/
+
+# Downloaded frameworks (install via pip/harbor download)
+harbor/
+terminal-bench/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Claude Code local settings
+.claude/
+
+# Ollama modelfiles
+Modelfile
