@@ -85,6 +85,3 @@ Results are saved to `jobs/<timestamp>/`. Each task folder contains:
 - `result.json` — pass/fail, timing, errors
 - `agent/trajectory.json` — full agent trace (what the AI did step by step)
 
-## Research Goal
-
-Building an objective harness quality metric using e-values (testing by betting) to compare AI agent harnesses with statistical rigor.
