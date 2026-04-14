@@ -141,11 +141,15 @@ class HarborTaskBuilder:
             memory_mb = 4096
         """)
 
-        # Append any benchmark-specific metadata
-        if task.metadata:
+        extras = {
+            k: v for k, v in (task.metadata or {}).items()
+            if isinstance(v, str) and "\n" not in v and len(v) <= 200
+        }
+        if extras:
             content += "\n[metadata.extra]\n"
-            for k, v in task.metadata.items():
-                content += f'{k} = "{v}"\n'
+            for k, v in extras.items():
+                escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+                content += f'{k} = "{escaped}"\n'
 
         (task_dir / "task.toml").write_text(content, encoding="utf-8")
 
@@ -172,10 +176,11 @@ class HarborTaskBuilder:
         tests_dir = task_dir / "tests"
         tests_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy benchmark-specific test.sh from template
-        template_test = self._template_dir / "tests" / "test.sh"
-        if template_test.exists():
-            shutil.copy(template_test, tests_dir / "test.sh")
+        template_tests = self._template_dir / "tests"
+        if template_tests.is_dir():
+            for src in template_tests.iterdir():
+                if src.is_file():
+                    shutil.copy(src, tests_dir / src.name)
 
         # Write deliverables list (used by most verifiers)
         (tests_dir / "deliverables.txt").write_text(
