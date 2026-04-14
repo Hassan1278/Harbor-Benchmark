@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
-GDPVal judge — extracts deliverables to text, then scores against rubric.
+GDPVal judge — scores deliverables against a rubric using an LLM.
 
 Provider priority (first match wins):
   1. Gemini        (GEMINI_API_KEY)           — paper default (gemini-3.1-pro-preview)
+                                                sends PDFs as native multimodal parts
   2. Anthropic     (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)
-  3. Ollama Cloud  (http://host.docker.internal:11434) — free, uses a cloud model
+                                                sends PDFs as document blocks
+  3. Ollama Cloud  (http://host.docker.internal:11434) — free, text-only
   4. Fallback      (no judge reachable) — reward 0.5
+
+xlsx / docx are always extracted to text (no provider accepts them natively).
+PDFs go raw to Gemini/Anthropic; extracted to text for Ollama.
 
 Override with JUDGE_PROVIDER=gemini|anthropic|ollama and JUDGE_MODEL=<id>.
 """
 
+import base64
 import json
 import os
 import sys
@@ -21,7 +27,10 @@ RUBRIC_PATH = Path("/tests/rubric.json")
 DELIVERABLES_PATH = Path("/tests/deliverables.txt")
 REWARD_PATH = Path("/logs/verifier/reward.json")
 MAX_CONTENT_CHARS = 60_000
+MAX_INLINE_BYTES = 18 * 1024 * 1024  # Gemini/Anthropic inline cap ~20MB
 
+
+# ---------- Text extractors (for non-native formats) ----------
 
 def extract_xlsx(path: Path) -> str:
     from openpyxl import load_workbook
@@ -47,26 +56,33 @@ def extract_docx(path: Path) -> str:
     return "\n".join(p.text for p in doc.paragraphs)
 
 
-EXTRACTORS = {
+TEXT_EXTRACTORS = {
     ".xlsx": extract_xlsx, ".xlsm": extract_xlsx, ".xls": extract_xlsx,
     ".pdf": extract_pdf,
     ".docx": extract_docx,
 }
 
 
-def extract(path: Path) -> str:
+def extract_text(path: Path) -> str:
     ext = path.suffix.lower()
     try:
-        if ext in EXTRACTORS:
-            content = EXTRACTORS[ext](path)
-        else:
-            content = path.read_text(encoding="utf-8", errors="replace")
+        content = TEXT_EXTRACTORS[ext](path) if ext in TEXT_EXTRACTORS \
+            else path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"[extraction failed for {path.name}: {e}]"
     if len(content) > MAX_CONTENT_CHARS:
         content = content[:MAX_CONTENT_CHARS] + "\n[...truncated...]"
     return content
 
+
+def read_inline(path: Path) -> str | None:
+    """Base64-encode a file if it fits under the inline size cap."""
+    if path.stat().st_size > MAX_INLINE_BYTES:
+        return None
+    return base64.b64encode(path.read_bytes()).decode()
+
+
+# ---------- Deliverable discovery ----------
 
 def find_deliverable(name: str) -> Path | None:
     for root in (Path("/app/output"), Path("/app")):
@@ -76,7 +92,9 @@ def find_deliverable(name: str) -> Path | None:
     return None
 
 
-def http_post_json(url: str, body: dict, headers: dict, timeout: int = 120) -> dict:
+# ---------- HTTP helpers ----------
+
+def http_post_json(url: str, body: dict, headers: dict, timeout: int = 180) -> dict:
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url, data=data,
@@ -92,20 +110,47 @@ def parse_score(text: str) -> dict:
     return json.loads(text[start:end])
 
 
-def judge_gemini(prompt: str) -> dict | None:
+# ---------- Prompt building ----------
+
+INSTRUCTIONS = (
+    "You are an expert professional grader for the GDPVal benchmark.\n"
+    "Score the deliverables provided below against the rubric.\n\n"
+    "Score on a scale from 0.0 to 1.0 based on the fraction of rubric points earned.\n"
+    'Respond with ONLY a JSON object: {"score": <float 0-1>, "reason": "<brief>"}\n'
+)
+
+
+def build_prompt_header(rubric: str) -> str:
+    return f"{INSTRUCTIONS}\nRUBRIC:\n{rubric}\n"
+
+
+# ---------- Judges ----------
+
+def judge_gemini(rubric: str, found: dict[str, Path]) -> dict | None:
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         return None
     model = os.environ.get("JUDGE_MODEL", "gemini-3.1-pro-preview")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+
+    parts: list[dict] = [{"text": build_prompt_header(rubric)}]
+    for name, path in found.items():
+        if path.suffix.lower() == ".pdf":
+            b64 = read_inline(path)
+            if b64 is not None:
+                parts.append({"text": f"\n--- {name} (attached PDF) ---"})
+                parts.append({"inline_data": {"mime_type": "application/pdf", "data": b64}})
+                continue
+        parts.append({"text": f"\n--- {name} ---\n{extract_text(path)}"})
+
     data = http_post_json(url, {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{"parts": parts}],
         "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
     }, {})
     return parse_score(data["candidates"][0]["content"]["parts"][0]["text"])
 
 
-def judge_anthropic(prompt: str) -> dict | None:
+def judge_anthropic(rubric: str, found: dict[str, Path]) -> dict | None:
     key = os.environ.get("ANTHROPIC_API_KEY")
     oauth = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     if key:
@@ -119,20 +164,37 @@ def judge_anthropic(prompt: str) -> dict | None:
     else:
         return None
     model = os.environ.get("JUDGE_MODEL", "claude-sonnet-4-5")
+
+    content: list[dict] = [{"type": "text", "text": build_prompt_header(rubric)}]
+    for name, path in found.items():
+        if path.suffix.lower() == ".pdf":
+            b64 = read_inline(path)
+            if b64 is not None:
+                content.append({"type": "text", "text": f"\n--- {name} (attached PDF) ---"})
+                content.append({
+                    "type": "document",
+                    "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
+                })
+                continue
+        content.append({"type": "text", "text": f"\n--- {name} ---\n{extract_text(path)}"})
+
     data = http_post_json("https://api.anthropic.com/v1/messages", {
         "model": model, "max_tokens": 500, "temperature": 0.0,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }, headers)
     return parse_score(data["content"][0]["text"])
 
 
-def judge_ollama(prompt: str) -> dict | None:
+def judge_ollama(rubric: str, found: dict[str, Path]) -> dict | None:
     host = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
     model = os.environ.get("JUDGE_MODEL", "gpt-oss:120b-cloud")
+    body = build_prompt_header(rubric) + "\nDELIVERABLE CONTENTS:\n" + "".join(
+        f"\n--- {n} ---\n{extract_text(p)}" for n, p in found.items()
+    )
     data = http_post_json(f"{host}/api/generate", {
-        "model": model, "prompt": prompt, "stream": False,
+        "model": model, "prompt": body, "stream": False,
         "options": {"temperature": 0.0},
-    }, {}, timeout=180)
+    }, {}, timeout=300)
     return parse_score(data.get("response", ""))
 
 
@@ -145,6 +207,8 @@ def pick_judge_order() -> list[str]:
         return [forced]
     return ["gemini", "anthropic", "ollama"]
 
+
+# ---------- Output ----------
 
 def write_reward(reward: float, reason: str, judge: str = "none") -> None:
     REWARD_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -174,20 +238,10 @@ def main() -> None:
         return
 
     rubric = RUBRIC_PATH.read_text() if RUBRIC_PATH.exists() else "[]"
-    body = "".join(f"\n--- {n} ---\n{extract(p)}" for n, p in found.items())
-
-    prompt = (
-        "You are an expert professional grader for the GDPVal benchmark.\n"
-        "Score the deliverables below against the rubric.\n\n"
-        f"RUBRIC:\n{rubric}\n\n"
-        f"DELIVERABLE CONTENTS:\n{body}\n\n"
-        "Score on a scale from 0.0 to 1.0 based on the fraction of rubric points earned.\n"
-        'Respond with ONLY a JSON object: {"score": <float 0-1>, "reason": "<brief>"}\n'
-    )
 
     for name in pick_judge_order():
         try:
-            result = JUDGES[name](prompt)
+            result = JUDGES[name](rubric, found)
         except Exception as e:
             print(f"Judge {name} errored: {e}", file=sys.stderr)
             continue
