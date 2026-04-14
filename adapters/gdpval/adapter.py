@@ -22,7 +22,7 @@ from pathlib import Path
 
 from adapters.core.models import BenchmarkTask
 from adapters.core.builder import HarborTaskBuilder, FileDownloader
-from adapters.core.verifier import VerifierConfig, VerifierType
+from adapters.core.verifier import VerifierConfig
 from adapters.core.adapter import BenchmarkAdapter
 
 from adapters.gdpval.loader import GDPValLoader
@@ -53,17 +53,13 @@ def build_adapter(output_dir: str = "datasets/gdpval") -> GDPValAdapter:
 
     loader = GDPValLoader()
     downloader = FileDownloader()
-    verifier = VerifierConfig(
-        verifier_type=VerifierType.LLM_JUDGE,
-        judge_model="gemini-3.1-pro-preview",
-        judge_api_env_var="GEMINI_API_KEY",
-        timeout_sec=300.0,
-    )
+    verifier = VerifierConfig(timeout_sec=300.0)
     builder = HarborTaskBuilder(
         template_dir=template_dir,
         downloader=downloader,
         verifier_config=verifier,
-        dockerfile_packages=["openpyxl", "pandas", "python-docx", "pdfplumber"],
+        pip_packages=["openpyxl", "pandas", "python-docx", "pdfplumber"],
+        apt_packages=["curl", "jq", "file", "libreoffice-nogui"],
     )
 
     return GDPValAdapter(

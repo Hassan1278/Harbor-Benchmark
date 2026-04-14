@@ -44,15 +44,20 @@ class FileDownloader:
             return False
 
 
+DEFAULT_APT_PACKAGES = ("curl", "jq", "file")
+
+
 class HarborTaskBuilder:
     """
     Builds a Harbor task directory from a BenchmarkTask.
 
     Parameters:
-        template_dir:     Path to benchmark-specific template/ folder
-        downloader:       For fetching reference files
-        verifier_config:  How to verify results
-        dockerfile_extra: Extra Dockerfile lines (pip packages, apt packages)
+        template_dir:    Path to benchmark-specific template/ folder
+        downloader:      For fetching reference files
+        verifier_config: How to verify results
+        pip_packages:    Python packages installed into the task image
+        apt_packages:    Debian packages installed into the task image
+                         (defaults: curl, jq, file)
     """
 
     def __init__(
@@ -60,12 +65,14 @@ class HarborTaskBuilder:
         template_dir: Path,
         downloader: FileDownloader,
         verifier_config: VerifierConfig,
-        dockerfile_packages: list[str] | None = None,
+        pip_packages: list[str] | None = None,
+        apt_packages: list[str] | None = None,
     ):
         self._template_dir = template_dir
         self._downloader = downloader
         self._verifier = verifier_config
-        self._dockerfile_packages = dockerfile_packages or []
+        self._pip_packages = pip_packages or []
+        self._apt_packages = list(apt_packages) if apt_packages else list(DEFAULT_APT_PACKAGES)
 
     def build(
         self,
@@ -192,21 +199,17 @@ class HarborTaskBuilder:
             (tests_dir / filename).write_text(content, encoding="utf-8")
 
     def _render_dockerfile(self, has_references: bool) -> str:
+        apt = " ".join(self._apt_packages)
         lines = [
             "FROM python:3.11-slim",
             "WORKDIR /app",
-            "RUN apt-get update && apt-get install -y --no-install-recommends \\",
-            "    curl jq file \\",
+            f"RUN apt-get update && apt-get install -y --no-install-recommends {apt} \\",
             "    && rm -rf /var/lib/apt/lists/*",
         ]
-
-        if self._dockerfile_packages:
-            pkgs = " ".join(self._dockerfile_packages)
-            lines.append(f"RUN pip install --no-cache-dir {pkgs}")
-
+        if self._pip_packages:
+            pip = " ".join(self._pip_packages)
+            lines.append(f"RUN pip install --no-cache-dir {pip}")
         lines.append("RUN mkdir -p /app/references /app/output")
-
         if has_references:
             lines.append("COPY references/ /app/references/")
-
         return "\n".join(lines) + "\n"

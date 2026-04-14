@@ -8,7 +8,7 @@ into Harbor format. Benchmark plugins subclass this to add custom logic
 
 import textwrap
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from adapters.core.models import BenchmarkTask
 from adapters.core.loader import DatasetLoader
@@ -38,7 +38,7 @@ class BenchmarkAdapter:
     def run(
         self,
         limit: Optional[int] = None,
-        filter_fn: Optional[callable] = None,
+        filter_fn: Optional[Callable[[BenchmarkTask], bool]] = None,
     ) -> list[str]:
         """
         Convert benchmark tasks to Harbor format.
