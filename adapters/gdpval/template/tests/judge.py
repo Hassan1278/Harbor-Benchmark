@@ -148,9 +148,10 @@ def pick_judge_order() -> list[str]:
 
 def write_reward(reward: float, reason: str, judge: str = "none") -> None:
     REWARD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REWARD_PATH.write_text(json.dumps({
+    REWARD_PATH.write_text(json.dumps({"reward": reward}))
+    (REWARD_PATH.parent / "judge.json").write_text(json.dumps({
         "reward": reward, "reason": reason, "judge": judge,
-    }))
+    }, indent=2))
 
 
 def main() -> None:
