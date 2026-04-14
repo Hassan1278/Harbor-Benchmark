@@ -1,0 +1,19 @@
+version = "1.0"
+
+[metadata]
+author_name = "Hassan"
+author_email = ""
+category = "{{category}}"
+tags = ["gdpval", "{{sector}}"]
+difficulty = "medium"
+
+[verifier]
+timeout_sec = 300.0
+
+[agent]
+timeout_sec = 1800.0
+
+[environment]
+cpus = 2
+memory_mb = 4096
+allow_internet = true
