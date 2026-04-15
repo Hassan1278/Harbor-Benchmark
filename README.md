@@ -39,6 +39,19 @@ OLLAMA_MODEL="qwen3-coder-cloud" bash run.sh --ollama -p datasets/gdpval/ -n 1
 
 `python -m adapters.gdpval.adapter --help` for filtering by sector and output dir.
 
+Each generated task also pre-downloads the human expert's **gold solution** into `solution/` — used by the calibration helper below, ignored by Harbor at runtime.
+
+### Judge calibration
+
+Sanity-check that the judge scores the gold solutions near 1.0:
+
+```bash
+pip install openpyxl pdfplumber python-docx
+python -m adapters.gdpval.calibrate --limit 10 -o calibration.json
+```
+
+If the mean calibration score is <0.9, the judge is too harsh or the rubric is ambiguous — agent comparisons are uncalibrated until that's resolved.
+
 ## Providers
 
 | Flag | Agent | Model | Auth |

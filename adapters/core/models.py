@@ -29,6 +29,7 @@ class BenchmarkTask:
     tags: list[str] = field(default_factory=list)
     reference_files: list[ReferenceFile] = field(default_factory=list)
     deliverable_files: list[str] = field(default_factory=list)
+    solution_files: list[ReferenceFile] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
     @property

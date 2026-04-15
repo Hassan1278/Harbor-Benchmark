@@ -1,4 +1,4 @@
 [dataset]
 name = "gdpval"
 version = "1.0"
-tasks = 1
+tasks = 2

@@ -99,9 +99,16 @@ class HarborTaskBuilder:
         self._write_task_toml(task, task_dir)
         self._write_environment(task, task_dir)
         self._write_tests(task, task_dir, extra_test_files or {})
-        (task_dir / "solution").mkdir(exist_ok=True)
+        self._write_solution(task, task_dir)
 
         return task_dir
+
+    def _write_solution(self, task: BenchmarkTask, task_dir: Path):
+        sol_dir = task_dir / "solution"
+        sol_dir.mkdir(parents=True, exist_ok=True)
+        for sf in task.solution_files:
+            if sf.url:
+                self._downloader.download(sf.url, sol_dir / sf.name)
 
     def _write_instruction(self, task: BenchmarkTask, task_dir: Path):
         sections = [task.prompt]

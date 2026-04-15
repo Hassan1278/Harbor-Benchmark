@@ -23,13 +23,12 @@ class GDPValLoader(DatasetLoader):
 
     @staticmethod
     def _to_task(row: dict) -> BenchmarkTask:
-        ref_names = row.get("reference_files") or []
-        ref_urls = row.get("reference_file_urls") or []
-        refs = [
-            ReferenceFile(name=n, url=u)
-            for n, u in zip(ref_names, ref_urls)
-            if n
-        ]
+        refs = GDPValLoader._pair(
+            row.get("reference_files"), row.get("reference_file_urls")
+        )
+        solutions = GDPValLoader._pair(
+            row.get("deliverable_files"), row.get("deliverable_file_urls")
+        )
 
         sector = row.get("sector", "unknown")
         occupation = row.get("occupation", "unknown")
@@ -41,6 +40,7 @@ class GDPValLoader(DatasetLoader):
             tags=["gdpval", sector],
             reference_files=refs,
             deliverable_files=row.get("deliverable_files") or [],
+            solution_files=solutions,
             metadata={
                 "sector": sector,
                 "occupation": occupation,
@@ -48,3 +48,11 @@ class GDPValLoader(DatasetLoader):
                 "rubric_pretty": row.get("rubric_pretty", ""),
             },
         )
+
+    @staticmethod
+    def _pair(names, urls) -> list[ReferenceFile]:
+        return [
+            ReferenceFile(name=n, url=u)
+            for n, u in zip(names or [], urls or [])
+            if n
+        ]
