@@ -6,15 +6,16 @@
 #
 # Options:
 #   --random N       Pick N random tasks from Terminal-Bench 2.0
+#   --model  ID      Override the default model for the selected provider
 #   --claude         Use Claude Code + OAuth (default)
 #   --ollama         Use Claude Code + Ollama Cloud (qwen3-coder:480b)
 #   --groq           Use Terminus + Groq
 #   --gemini         Use Terminus + Gemini
 #
 # Examples:
-#   bash run.sh --random 8 -d terminal-bench@2.0 -n 2
-#   bash run.sh --ollama --random 8 -d terminal-bench@2.0 -n 2
 #   bash run.sh --claude --random 5 -d terminal-bench@2.0 -n 1
+#   bash run.sh --claude --model anthropic/claude-haiku-4-5-20251001 -p datasets/gdpval -n 1
+#   bash run.sh --ollama --random 8 -d terminal-bench@2.0 -n 2
 
 SCRIPT_DIR="$(dirname "$0")"
 export PATH="$HOME/.local/bin:$PATH"
@@ -30,6 +31,7 @@ fi
 # Defaults
 PROVIDER="claude"
 RANDOM_N=""
+MODEL_OVERRIDE=""
 
 # Parse our custom flags
 while true; do
@@ -58,6 +60,10 @@ while true; do
             RANDOM_N="$2"
             shift 2
             ;;
+        --model)
+            MODEL_OVERRIDE="$2"
+            shift 2
+            ;;
         *)
             break
             ;;
@@ -69,8 +75,10 @@ PROVIDER_ARGS=()
 case "$PROVIDER" in
     claude)
         export CLAUDE_CODE_OAUTH_TOKEN=$(python3 "$SCRIPT_DIR/get_token.py" 2>/dev/null)
+        MODEL="${MODEL_OVERRIDE:-anthropic/claude-sonnet-4-20250514}"
         echo "Provider: Claude Code (OAuth: ${CLAUDE_CODE_OAUTH_TOKEN:0:20}...)"
-        PROVIDER_ARGS+=("-a" "claude-code" "-m" "anthropic/claude-sonnet-4-20250514")
+        echo "Model: $MODEL"
+        PROVIDER_ARGS+=("-a" "claude-code" "-m" "$MODEL")
         ;;
     ollama)
         # Claude Code agent pointed at Ollama's Anthropic-compatible API
@@ -81,34 +89,38 @@ case "$PROVIDER" in
         export ANTHROPIC_API_KEY=""
         # Claude Code uses 3 internal model tiers — all must point to our Ollama model
         OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:0.6b}"
-        export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OLLAMA_MODEL"
-        export ANTHROPIC_DEFAULT_SONNET_MODEL="$OLLAMA_MODEL"
-        export ANTHROPIC_DEFAULT_OPUS_MODEL="$OLLAMA_MODEL"
-        echo "Provider: Claude Code + Ollama (Model: $OLLAMA_MODEL)"
-        PROVIDER_ARGS+=("-a" "claude-code" "-m" "$OLLAMA_MODEL")
+        MODEL="${MODEL_OVERRIDE:-$OLLAMA_MODEL}"
+        export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL"
+        export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL"
+        export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL"
+        echo "Provider: Claude Code + Ollama (Model: $MODEL)"
+        PROVIDER_ARGS+=("-a" "claude-code" "-m" "$MODEL")
         ;;
     ollama-terminus)
         # Official Harbor approach: Terminus-2 agent + LiteLLM Ollama support
         # See: https://github.com/harbor-framework/harbor/commit/e4b6e0b
         OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:0.6b}"
-        echo "Provider: Terminus-2 + Ollama (Model: $OLLAMA_MODEL)"
-        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "ollama/$OLLAMA_MODEL")
+        MODEL="${MODEL_OVERRIDE:-ollama/$OLLAMA_MODEL}"
+        echo "Provider: Terminus-2 + Ollama (Model: $MODEL)"
+        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "$MODEL")
         ;;
     groq)
         if [ -z "$GROQ_API_KEY" ]; then
             echo "ERROR: GROQ_API_KEY not set. Add it to .env"
             exit 1
         fi
+        MODEL="${MODEL_OVERRIDE:-groq/llama-3.3-70b-versatile}"
         echo "Provider: Groq + Terminus (Key: ${GROQ_API_KEY:0:10}...)"
-        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "groq/llama-3.3-70b-versatile")
+        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "$MODEL")
         ;;
     gemini)
         if [ -z "$GEMINI_API_KEY" ]; then
             echo "ERROR: GEMINI_API_KEY not set. Add it to .env"
             exit 1
         fi
+        MODEL="${MODEL_OVERRIDE:-gemini/gemini-2.0-flash}"
         echo "Provider: Gemini + Terminus (Key: ${GEMINI_API_KEY:0:10}...)"
-        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "gemini/gemini-2.0-flash")
+        PROVIDER_ARGS+=("-a" "terminus-2" "-m" "$MODEL")
         ;;
 esac
 
@@ -125,7 +137,14 @@ if [ -n "$RANDOM_N" ]; then
     done
 fi
 
+# Build runtime .env for Harbor (root .env + dynamic OAuth token).
+# Agent gets env vars via --env-file; verifier gets them via [verifier.env] in task.toml.
+RUNTIME_ENV=$(mktemp)
+trap "rm -f '$RUNTIME_ENV'" EXIT
+[ -f "$SCRIPT_DIR/.env" ] && cat "$SCRIPT_DIR/.env" > "$RUNTIME_ENV"
+echo "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}" >> "$RUNTIME_ENV"
+
 echo "---"
 echo "Running: harbor run ${PROVIDER_ARGS[*]} ${INCLUDE_ARGS[*]} $@"
 echo "---"
-harbor run "${PROVIDER_ARGS[@]}" "${INCLUDE_ARGS[@]}" "$@"
+harbor run "${PROVIDER_ARGS[@]}" --env-file "$RUNTIME_ENV" -y "${INCLUDE_ARGS[@]}" "$@"

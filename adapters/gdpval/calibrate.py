@@ -38,7 +38,7 @@ def _load_judge_module():
 def calibrate_task(task_dir: Path, judge_mod) -> dict:
     rubric_path = task_dir / "tests" / "rubric.json"
     deliverables_path = task_dir / "tests" / "deliverables.txt"
-    solution_dir = task_dir / "solution"
+    solution_dir = task_dir / "tests" / "solution"
 
     if not rubric_path.exists() or not deliverables_path.exists():
         return {"task": task_dir.name, "score": None, "error": "missing rubric/deliverables"}
@@ -62,21 +62,17 @@ def calibrate_task(task_dir: Path, judge_mod) -> dict:
         return {"task": task_dir.name, "score": None, "error": f"missing gold: {missing}"}
 
     rubric = rubric_path.read_text()
-    for judge in judge_mod.judge_chain():
-        if not judge.available():
-            continue
-        try:
-            result = judge.score(rubric, attachments)
-        except Exception as e:
-            print(f"  {judge.name} errored: {e}", file=sys.stderr)
-            continue
-        return {
-            "task": task_dir.name,
-            "score": float(result.get("score", 0)),
-            "judge": judge.name,
-            "reason": str(result.get("reason", ""))[:300],
-        }
-    return {"task": task_dir.name, "score": None, "error": "no judge available"}
+    judge = judge_mod.Judge()
+    try:
+        result = judge.score_rubric(rubric, attachments)
+    except Exception as e:
+        return {"task": task_dir.name, "score": None, "error": f"{judge.provider} errored: {e}"}
+    return {
+        "task": task_dir.name,
+        "score": float(result.get("score", 0)),
+        "judge": f"{judge.provider}/{judge.model}",
+        "reason": str(result.get("reason", ""))[:300],
+    }
 
 
 def main():

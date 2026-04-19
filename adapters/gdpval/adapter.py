@@ -32,18 +32,21 @@ class GDPValAdapter(BenchmarkAdapter):
     """
     GDPVal-specific adapter.
 
-    Overrides `extra_test_files` to inject the rubric into each task,
-    which the Gemini judge reads at verification time.
+    Injects into each task's tests/ directory:
+      - rubric.json   for rubric-mode judging
+      - prompt.txt    for pairwise-mode judging (judge needs task context)
     """
 
     def extra_test_files(self, task: BenchmarkTask) -> dict[str, str]:
-        """Inject the rubric JSON for the LLM judge."""
         rubric = (
             task.metadata.get("rubric_json")
             or task.metadata.get("rubric_pretty")
             or "{}"
         )
-        return {"rubric.json": rubric}
+        return {
+            "rubric.json": rubric,
+            "prompt.txt": task.prompt,
+        }
 
 
 def build_adapter(output_dir: str = "datasets/gdpval") -> GDPValAdapter:
@@ -53,7 +56,17 @@ def build_adapter(output_dir: str = "datasets/gdpval") -> GDPValAdapter:
 
     loader = GDPValLoader()
     downloader = FileDownloader()
-    verifier = VerifierConfig(timeout_sec=300.0)
+    verifier = VerifierConfig(
+        timeout_sec=300.0,
+        env={
+            "JUDGE_MODE": "${JUDGE_MODE:-rubric}",
+            "JUDGE_MODEL": "${JUDGE_MODEL:-}",
+            "JUDGE_PROVIDER": "${JUDGE_PROVIDER:-}",
+            "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}",
+            "CLAUDE_CODE_OAUTH_TOKEN": "${CLAUDE_CODE_OAUTH_TOKEN:-}",
+            "GEMINI_API_KEY": "${GEMINI_API_KEY:-}",
+        },
+    )
     builder = HarborTaskBuilder(
         template_dir=template_dir,
         downloader=downloader,

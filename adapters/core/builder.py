@@ -8,10 +8,10 @@ Generates the standard Harbor task layout from a BenchmarkTask:
     ├── task.toml
     ├── environment/
     │   ├── Dockerfile
-    │   └── references/     (if any)
-    ├── tests/
-    │   └── test.sh
-    └── solution/
+    │   └── references/       (if any)
+    └── tests/
+        ├── test.sh
+        └── solution/         (gold expert output, for pairwise judging)
 
 This module is benchmark-agnostic. Benchmark-specific files (rubrics,
 patches, etc.) are injected via the `extra_test_files` parameter.
@@ -104,7 +104,7 @@ class HarborTaskBuilder:
         return task_dir
 
     def _write_solution(self, task: BenchmarkTask, task_dir: Path):
-        sol_dir = task_dir / "solution"
+        sol_dir = task_dir / "tests" / "solution"
         sol_dir.mkdir(parents=True, exist_ok=True)
         for sf in task.solution_files:
             if sf.url:
@@ -154,6 +154,12 @@ class HarborTaskBuilder:
             cpus = 2
             memory_mb = 4096
         """)
+
+        if self._verifier.env:
+            content += "\n[verifier.env]\n"
+            for k, v in self._verifier.env.items():
+                escaped = v.replace("\\", "\\\\").replace('"', '\\"')
+                content += f'{k} = "{escaped}"\n'
 
         extras = {
             k: v for k, v in (task.metadata or {}).items()
